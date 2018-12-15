@@ -26,6 +26,13 @@ import { Runner } from './runner';
 import * as telemetry from './telemetry';
 import { ModuleOverview } from './views/module-overview';
 
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions,
+    Executable,
+} from 'vscode-languageclient';
+
 export let outputChannel = vscode.window.createOutputChannel("Terraform");
 const logger = new logging.Logger("extension");
 
@@ -34,14 +41,36 @@ const documentSelector: vscode.DocumentSelector = [
     { language: "terraform", scheme: "untitled" }
 ];
 
+let langClient: LanguageClient;
+
 export async function activate(ctx: vscode.ExtensionContext) {
+    telemetry.activate(ctx);
+    logging.configure(outputChannel);
+
+    let lspExec: Executable = {
+        command: "terraform", // TODO: Use configured Terraform path
+        args: ['langserver'],
+    }
+    let serverOptions: ServerOptions = {
+        run: lspExec,
+        debug: lspExec,
+    }
+    let clientOptions: LanguageClientOptions = {
+        documentSelector: [{ scheme: 'file', language: 'terraform' }],
+        synchronize: {
+            fileEvents: vscode.workspace.createFileSystemWatcher('**/.terraform.lock'),
+        },
+    }
+    langClient = new LanguageClient("terraform-langserver", serverOptions, clientOptions);
+    langClient.start()
+
+    return
+
     const start = process.hrtime();
 
     let indexAdapter = new IndexAdapter(new Index, getConfiguration().indexing.exclude || []);
     ctx.subscriptions.push(indexAdapter);
 
-    telemetry.activate(ctx);
-    logging.configure(outputChannel);
 
     let runner = await Runner.create();
 
@@ -117,5 +146,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
 export async function deactivate(): Promise<any> {
     logging.configure(null);
-    return await telemetry.deactivate();
+    await langClient.stop();
+    await telemetry.deactivate();
+    return null
 }
